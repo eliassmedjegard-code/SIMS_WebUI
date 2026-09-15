@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Compliance Assistant</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="css/sidebar.css" />
+  <link rel="stylesheet" href="css/chat.css" />
+  <link rel="stylesheet" href="css/modal.css" />
+</head>
+<body>
+  <div id="app">
+    <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="false" aria-controls="sidebar">
+      ☰
+    </button>
+
+    <aside id="sidebar" class="sidebar" aria-label="Conversation sidebar">
+      <div class="sidebar-header">
+        <h1 class="app-name">AI Compliance Assistant</h1>
+      </div>
+
+      <button type="button" id="newChatBtn" class="btn-new-chat">+ New Chat</button>
+
+      <div class="search-wrap">
+        <label for="searchChats" class="visually-hidden">Search chats</label>
+        <input type="search" id="searchChats" placeholder="Search chats" autocomplete="off" />
+      </div>
+
+      <nav class="conversation-list" id="conversationList" aria-label="Conversation history"></nav>
+
+      <div class="sidebar-footer">
+        <div class="connection-status" id="sidebarConnectionStatus" role="status" aria-live="polite">
+          <span class="status-dot connecting" id="sidebarStatusDot"></span>
+          <span id="sidebarStatusText">Checking local AI…</span>
+        </div>
+        <div class="user-area" id="userArea">
+          <div class="user-avatar" id="userAvatar">E</div>
+          <div class="user-info">
+            <div class="user-name" id="userName">Elias</div>
+            <div class="user-role" id="userRole">Compliance Analyst</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <main class="main-chat">
+      <header class="chat-header">
+        <div class="chat-header-left">
+          <h2 id="conversationTitle">New conversation</h2>
+        </div>
+        <div class="chat-header-right">
+          <span class="status-badge" id="ollamaStatus" role="status" aria-live="polite">
+            <span class="status-dot connecting" id="statusDot"></span>
+            <span id="statusText">Checking connection…</span>
+          </span>
+          <span class="model-badge" id="currentModelBadge" hidden></span>
+          <button type="button" id="settingsBtn" class="btn-icon" aria-haspopup="dialog" aria-controls="settingsOverlay">
+            Settings
+          </button>
+        </div>
+      </header>
+
+      <div class="error-banner" id="errorBanner" hidden role="alert">
+        <span id="errorBannerText"></span>
+        <button type="button" id="errorBannerAction">Dismiss</button>
+      </div>
+
+      <div class="chat-messages" id="chatMessages" aria-live="polite">
+        <div class="empty-state" id="emptyState">
+          <h2>AI Compliance Assistant</h2>
+          <p>Ask questions about AI regulations, company policies, and governance documentation.</p>
+          <div class="suggestion-grid" id="suggestionGrid"></div>
+        </div>
+      </div>
+
+      <form class="chat-input-area" id="chatForm">
+        <button type="button" id="attachBtn" title="Attach file (coming soon)" aria-label="Attach file (coming soon)" disabled>
+          📎
+        </button>
+        <label for="chatInput" class="visually-hidden">Message</label>
+        <textarea
+          id="chatInput"
+          rows="1"
+          placeholder="Ask about AI regulations, policies, or governance..."
+        ></textarea>
+        <button type="button" id="stopBtn" class="btn-stop" hidden>Stop</button>
+        <button type="submit" id="sendBtn" class="btn-send" aria-label="Send message">Send</button>
+      </form>
+    </main>
+
+    <div class="modal-overlay" id="settingsOverlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="modal-header">
+          <h2 id="settingsTitle">Settings</h2>
+          <button type="button" class="modal-close" id="settingsCloseBtn" aria-label="Close settings">✕</button>
+        </div>
+        <div class="modal-body">
+          <section class="settings-section" aria-labelledby="localAiHeading">
+            <h3 id="localAiHeading">Local AI</h3>
+            <div class="form-field">
+              <label for="ollamaUrlInput">Ollama URL</label>
+              <input type="url" id="ollamaUrlInput" placeholder="http://localhost:11434" />
+            </div>
+            <div class="form-field">
+              <label for="modelSelect">Model</label>
+              <select id="modelSelect">
+                <option value="">No models found</option>
+              </select>
+              <div class="field-hint" id="modelHint">Connect to Ollama to list installed models.</div>
+            </div>
+            <div class="form-field">
+              <label for="temperatureInput">Temperature</label>
+              <div class="range-row">
+                <input type="range" id="temperatureInput" min="0" max="1" step="0.05" value="0.3" />
+                <span class="range-value" id="temperatureValue">0.3</span>
+              </div>
+            </div>
+            <div class="form-field">
+              <label for="maxTokensInput">Max output length (tokens)</label>
+              <input type="number" id="maxTokensInput" min="64" max="8192" step="64" value="1024" />
+            </div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="appearanceHeading">
+            <h3 id="appearanceHeading">Appearance</h3>
+            <div class="theme-options" role="radiogroup" aria-labelledby="appearanceHeading">
+              <button type="button" class="theme-option" data-theme-choice="light" role="radio">Light</button>
+              <button type="button" class="theme-option" data-theme-choice="dark" role="radio">Dark</button>
+              <button type="button" class="theme-option" data-theme-choice="system" role="radio">System</button>
+            </div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="chatSectionHeading">
+            <h3 id="chatSectionHeading">Chat</h3>
+            <button type="button" class="btn-danger-text" id="clearCurrentBtn">Clear current conversation</button>
+            <br />
+            <button type="button" class="btn-danger-text" id="clearHistoryBtn">Clear all conversation history</button>
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn-secondary" id="settingsCancelBtn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="alert" hidden></div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
