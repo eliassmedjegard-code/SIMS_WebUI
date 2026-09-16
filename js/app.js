@@ -9,16 +9,17 @@
 import { OllamaService, OllamaError, ConnectionState } from './ollama.js';
 import { ChatStore } from './chat.js';
 import { getSettings, saveSettings } from './storage.js';
+import { themes } from './themes.js';
+import { testAccounts, getCurrentUser, login, logout } from './auth.js';
+import { can } from './permissions.js';
 import {
   renderMarkdown,
-  escapeHtml,
-  formatRelativeDateGroup,
   buildSourcesHtml,
   buildContextHtml,
   scrollToBottom,
   autosizeTextarea,
 } from './ui.js';
-import { suggestionPrompts, mockSourcesForLiveResponse, mockContextForLiveResponse, mockUser } from '../data/mock-data.js';
+import { suggestionPrompts, mockSourcesForLiveResponse, mockContextForLiveResponse } from '../data/mock-data.js';
 
 // ---------------------------------------------------------------------------
 // State
@@ -31,25 +32,17 @@ const store = new ChatStore();
 let isGenerating = false;
 let currentConnectionState = ConnectionState.CONNECTING;
 let toastTimer = null;
+let currentUser = null;
 
 // ---------------------------------------------------------------------------
 // DOM references
 // ---------------------------------------------------------------------------
 
 const el = {
-  sidebar: document.getElementById('sidebar'),
-  sidebarToggle: document.getElementById('sidebarToggle'),
-  sidebarOverlay: document.getElementById('sidebarOverlay'),
-  newChatBtn: document.getElementById('newChatBtn'),
-  searchChats: document.getElementById('searchChats'),
-  conversationList: document.getElementById('conversationList'),
-  sidebarStatusDot: document.getElementById('sidebarStatusDot'),
-  sidebarStatusText: document.getElementById('sidebarStatusText'),
   userAvatar: document.getElementById('userAvatar'),
   userName: document.getElementById('userName'),
   userRole: document.getElementById('userRole'),
 
-  conversationTitle: document.getElementById('conversationTitle'),
   statusDot: document.getElementById('statusDot'),
   statusText: document.getElementById('statusText'),
   currentModelBadge: document.getElementById('currentModelBadge'),
@@ -78,9 +71,14 @@ const el = {
   temperatureInput: document.getElementById('temperatureInput'),
   temperatureValue: document.getElementById('temperatureValue'),
   maxTokensInput: document.getElementById('maxTokensInput'),
-  themeOptions: Array.from(document.querySelectorAll('[data-theme-choice]')),
+  themeGrid: document.getElementById('themeGrid'),
   clearCurrentBtn: document.getElementById('clearCurrentBtn'),
-  clearHistoryBtn: document.getElementById('clearHistoryBtn'),
+  localAiFieldset: document.getElementById('localAiFieldset'),
+  localAiRestrictedHint: document.getElementById('localAiRestrictedHint'),
+
+  loginOverlay: document.getElementById('loginOverlay'),
+  accountList: document.getElementById('accountList'),
+  userChip: document.getElementById('userChip'),
 
   toast: document.getElementById('toast'),
 };
@@ -90,82 +88,75 @@ const el = {
 // ---------------------------------------------------------------------------
 
 function init() {
-  el.userAvatar.textContent = mockUser.initials;
-  el.userName.textContent = mockUser.name;
-  el.userRole.textContent = mockUser.role;
-
   applyTheme(settings.theme);
-  renderSuggestions();
-  renderSidebar();
-  renderConversation(store.getCurrentConversation());
-
   wireEvents();
+
+  currentUser = getCurrentUser();
+  if (!currentUser) {
+    showLogin();
+    return;
+  }
+  startApp();
+}
+
+// Runs once a user is authenticated (mock login today, Entra ID later) — see
+// auth.js for the seam. Nothing past this point should ever run for a
+// signed-out user.
+function startApp() {
+  applyUserToHeader(currentUser);
+  hideLogin();
+
+  renderThemeGrid();
+  renderSuggestions();
+  renderConversation(store.getConversation());
+
   updateSendAvailability();
   refreshConnection();
   setInterval(refreshConnection, 15000);
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar rendering
+// Auth
 // ---------------------------------------------------------------------------
 
-function renderSidebar(query = '') {
-  const conversations = query ? store.searchConversations(query) : store.getConversations();
-  el.conversationList.innerHTML = '';
-
-  if (conversations.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'no-results';
-    empty.textContent = query ? 'No matching conversations.' : 'No conversations yet.';
-    el.conversationList.appendChild(empty);
-    return;
+function showLogin() {
+  el.accountList.innerHTML = '';
+  for (const account of testAccounts) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'account-option';
+    btn.innerHTML = `
+      <span class="user-avatar">${account.initials}</span>
+      <span class="account-option-info">
+        <span class="account-option-name">${account.name}</span>
+        <span class="account-option-role">${account.role}</span>
+      </span>
+    `;
+    btn.addEventListener('click', () => handleLogin(account.username));
+    el.accountList.appendChild(btn);
   }
+  el.loginOverlay.hidden = false;
+}
 
-  let lastGroup = null;
-  for (const conv of conversations) {
-    const group = formatRelativeDateGroup(conv.updatedAt);
-    if (group !== lastGroup) {
-      const label = document.createElement('div');
-      label.className = 'conversation-group-label';
-      label.textContent = group;
-      el.conversationList.appendChild(label);
-      lastGroup = group;
-    }
+function hideLogin() {
+  el.loginOverlay.hidden = true;
+}
 
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'conversation-item' + (conv.id === store.currentConversationId ? ' active' : '');
-    item.setAttribute('aria-current', conv.id === store.currentConversationId ? 'true' : 'false');
+function handleLogin(username) {
+  currentUser = login(username);
+  startApp();
+}
 
-    const title = document.createElement('span');
-    title.className = 'conv-title';
-    title.textContent = conv.title;
-    item.appendChild(title);
+function handleLogout() {
+  if (!confirm('Log out / switch test account?')) return;
+  logout();
+  location.reload();
+}
 
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.className = 'conv-delete';
-    del.setAttribute('aria-label', `Delete conversation "${conv.title}"`);
-    del.textContent = '✕';
-    del.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (confirm(`Delete "${conv.title}"? This cannot be undone.`)) {
-        store.deleteConversation(conv.id);
-        renderSidebar(el.searchChats.value);
-        renderConversation(store.getCurrentConversation());
-      }
-    });
-    item.appendChild(del);
-
-    item.addEventListener('click', () => {
-      store.selectConversation(conv.id);
-      renderSidebar(el.searchChats.value);
-      renderConversation(store.getCurrentConversation());
-      closeMobileSidebar();
-    });
-
-    el.conversationList.appendChild(item);
-  }
+function applyUserToHeader(user) {
+  el.userAvatar.textContent = user.initials;
+  el.userName.textContent = user.name;
+  el.userRole.textContent = user.role;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +176,6 @@ function renderSuggestions() {
 }
 
 function renderConversation(conv) {
-  el.conversationTitle.textContent = conv?.title || 'New conversation';
   el.chatMessages.innerHTML = '';
 
   if (!conv || conv.messages.length === 0) {
@@ -204,8 +194,8 @@ function buildEmptyState() {
   const wrap = document.createElement('div');
   wrap.className = 'empty-state';
   wrap.innerHTML = `
-    <h2>AI Compliance Assistant</h2>
-    <p>Ask questions about AI regulations, company policies, and governance documentation.</p>
+    <h2>SIMS Staffing Assistant</h2>
+    <p>Ask questions about candidate CVs, job requirements, and staffing fit.</p>
     <div class="suggestion-grid" id="suggestionGridInline"></div>
   `;
   const grid = wrap.querySelector('#suggestionGridInline');
@@ -272,20 +262,16 @@ function sendMessage(text) {
   const trimmed = (text ?? el.chatInput.value).trim();
   if (!trimmed || isGenerating) return;
 
-  let conv = store.getCurrentConversation();
-  if (!conv) conv = store.createConversation();
-
-  store.addMessage(conv.id, { role: 'user', content: trimmed });
-  renderConversation(store.getCurrentConversation());
-  renderSidebar(el.searchChats.value);
+  store.addMessage({ role: 'user', content: trimmed });
+  renderConversation(store.getConversation());
 
   el.chatInput.value = '';
   autosizeTextarea(el.chatInput);
 
-  generateAssistantReply(conv.id);
+  generateAssistantReply();
 }
 
-async function generateAssistantReply(conversationId) {
+async function generateAssistantReply() {
   hideErrorBanner();
 
   if (currentConnectionState !== ConnectionState.CONNECTED) {
@@ -303,15 +289,13 @@ async function generateAssistantReply(conversationId) {
     return;
   }
 
-  const conv = store.conversations.find((c) => c.id === conversationId);
-  if (!conv) return;
+  const conv = store.getConversation();
 
   const historyForModel = conv.messages
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({ role: m.role, content: m.content }));
 
-  store.addMessage(conversationId, { role: 'assistant', content: '' });
-  renderSidebar(el.searchChats.value);
+  store.addMessage({ role: 'assistant', content: '' });
 
   const placeholderMsg = conv.messages[conv.messages.length - 1];
   let { row, contentDiv } = createMessageElement(placeholderMsg, { streaming: true });
@@ -333,40 +317,39 @@ async function generateAssistantReply(conversationId) {
     });
 
     const finalContent = fullText.trim() || '_The model returned an empty response._';
-    store.updateLastMessage(conversationId, {
+    store.updateLastMessage({
       content: finalContent,
       sources: mockSourcesForLiveResponse,
       context: mockContextForLiveResponse,
     });
 
     row.remove();
-    const finalMsg = store.conversations.find((c) => c.id === conversationId).messages.at(-1);
+    const finalMsg = store.getConversation().messages.at(-1);
     const rendered = createMessageElement(finalMsg);
     el.chatMessages.appendChild(rendered.row);
     scrollToBottom(el.chatMessages);
-    renderSidebar(el.searchChats.value);
   } catch (err) {
-    handleGenerationError(err, conversationId, row, contentDiv);
+    handleGenerationError(err, row, contentDiv);
   } finally {
     setGeneratingState(false);
   }
 }
 
-function handleGenerationError(err, conversationId, row, contentDiv) {
+function handleGenerationError(err, row, contentDiv) {
   contentDiv.classList.remove('streaming-cursor');
 
   if (err instanceof OllamaError && err.type === 'aborted') {
     const partial = (err.partialText || '').trim();
     const content = partial ? `${partial}\n\n*(Generation stopped.)*` : '*(Generation stopped before any output.)*';
-    store.updateLastMessage(conversationId, { content });
+    store.updateLastMessage({ content });
     contentDiv.innerHTML = renderMarkdown(content);
     return;
   }
 
   row.remove();
-  store.removeLastMessage(conversationId);
+  store.removeLastMessage();
   console.error('Generation failed:', err?.type ?? 'unknown', err?.message);
-  showErrorBanner(friendlyErrorMessage(err), { actionLabel: 'Retry', action: () => generateAssistantReply(conversationId) });
+  showErrorBanner(friendlyErrorMessage(err), { actionLabel: 'Retry', action: () => generateAssistantReply() });
 }
 
 function friendlyErrorMessage(err) {
@@ -404,13 +387,13 @@ function stopGeneration() {
 // ---------------------------------------------------------------------------
 
 async function refreshConnection() {
-  setStatusUI(ConnectionState.CONNECTING, 'Checking connection…', 'Checking local AI…');
+  setStatusUI(ConnectionState.CONNECTING, 'Checking connection…');
 
   const result = await ollama.checkConnection();
 
   if (result.state !== ConnectionState.CONNECTED) {
     currentConnectionState = ConnectionState.DISCONNECTED;
-    setStatusUI(ConnectionState.DISCONNECTED, 'Local AI unavailable · Ollama is not running', 'Local AI unavailable');
+    setStatusUI(ConnectionState.DISCONNECTED, 'Local AI unavailable · Ollama is not running');
     el.currentModelBadge.hidden = true;
     populateModelSelect([]);
     updateSendAvailability();
@@ -423,7 +406,7 @@ async function refreshConnection() {
 
     if (models.length === 0) {
       currentConnectionState = ConnectionState.ERROR;
-      setStatusUI(ConnectionState.ERROR, 'Ollama connected · no models installed', 'No models installed');
+      setStatusUI(ConnectionState.ERROR, 'Ollama connected · no models installed');
       el.currentModelBadge.hidden = true;
     } else {
       if (!settings.model || !models.includes(settings.model)) {
@@ -431,24 +414,22 @@ async function refreshConnection() {
         saveSettings(settings);
       }
       currentConnectionState = ConnectionState.CONNECTED;
-      setStatusUI(ConnectionState.CONNECTED, `Local AI connected · Model: ${settings.model}`, 'Local AI connected');
+      setStatusUI(ConnectionState.CONNECTED, `Local AI connected · Model: ${settings.model}`);
       el.currentModelBadge.hidden = false;
       el.currentModelBadge.textContent = settings.model;
     }
   } catch (err) {
     currentConnectionState = ConnectionState.ERROR;
-    setStatusUI(ConnectionState.ERROR, 'Connected, but failed to list models', 'Connected · model list failed');
+    setStatusUI(ConnectionState.ERROR, 'Connected, but failed to list models');
     el.currentModelBadge.hidden = true;
   }
 
   updateSendAvailability();
 }
 
-function setStatusUI(state, headerText, sidebarText) {
+function setStatusUI(state, headerText) {
   el.statusDot.className = `status-dot ${state}`;
   el.statusText.textContent = headerText;
-  el.sidebarStatusDot.className = `status-dot ${state}`;
-  el.sidebarStatusText.textContent = sidebarText;
 }
 
 // The send button is only gated on "is there text" and "is generation in
@@ -469,6 +450,11 @@ function openSettings() {
   el.temperatureValue.textContent = settings.temperature;
   el.maxTokensInput.value = settings.maxTokens;
   updateThemeButtons();
+
+  const canManageLocalAi = can(currentUser, 'manageLocalAiSettings');
+  el.localAiFieldset.disabled = !canManageLocalAi;
+  el.localAiRestrictedHint.hidden = canManageLocalAi;
+
   el.settingsOverlay.hidden = false;
   refreshModelListForSettings();
   el.settingsCloseBtn.focus();
@@ -519,8 +505,37 @@ function populateModelSelect(models) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Theme picker
+// ---------------------------------------------------------------------------
+
+function renderThemeGrid() {
+  el.themeGrid.innerHTML = '';
+  for (const theme of themes) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'theme-swatch-btn';
+    btn.dataset.themeChoice = theme.id;
+    btn.setAttribute('role', 'radio');
+    btn.innerHTML = `
+      <span class="theme-swatch-preview">
+        ${theme.swatches.map((color) => `<span class="swatch-dot" style="background:${color}"></span>`).join('')}
+      </span>
+      <span class="theme-swatch-label">${theme.label}</span>
+    `;
+    btn.addEventListener('click', () => {
+      settings.theme = theme.id;
+      saveSettings(settings);
+      applyTheme(settings.theme);
+      updateThemeButtons();
+    });
+    el.themeGrid.appendChild(btn);
+  }
+  updateThemeButtons();
+}
+
 function updateThemeButtons() {
-  el.themeOptions.forEach((btn) => {
+  el.themeGrid.querySelectorAll('.theme-swatch-btn').forEach((btn) => {
     const active = btn.dataset.themeChoice === settings.theme;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-checked', String(active));
@@ -528,10 +543,10 @@ function updateThemeButtons() {
 }
 
 function applyTheme(theme) {
-  if (theme === 'light' || theme === 'dark') {
-    document.documentElement.setAttribute('data-theme', theme);
-  } else {
+  if (theme === 'system') {
     document.documentElement.removeAttribute('data-theme');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
   }
 }
 
@@ -563,41 +578,10 @@ function hideErrorBanner() {
 }
 
 // ---------------------------------------------------------------------------
-// Mobile sidebar
-// ---------------------------------------------------------------------------
-
-function openMobileSidebar() {
-  el.sidebar.classList.add('open');
-  el.sidebarOverlay.classList.add('open');
-  el.sidebarToggle.setAttribute('aria-expanded', 'true');
-}
-
-function closeMobileSidebar() {
-  el.sidebar.classList.remove('open');
-  el.sidebarOverlay.classList.remove('open');
-  el.sidebarToggle.setAttribute('aria-expanded', 'false');
-}
-
-// ---------------------------------------------------------------------------
 // Event wiring
 // ---------------------------------------------------------------------------
 
 function wireEvents() {
-  el.newChatBtn.addEventListener('click', () => {
-    store.createConversation();
-    renderSidebar(el.searchChats.value);
-    renderConversation(store.getCurrentConversation());
-    closeMobileSidebar();
-  });
-
-  el.searchChats.addEventListener('input', () => renderSidebar(el.searchChats.value));
-
-  el.sidebarToggle.addEventListener('click', () => {
-    const isOpen = el.sidebar.classList.contains('open');
-    isOpen ? closeMobileSidebar() : openMobileSidebar();
-  });
-  el.sidebarOverlay.addEventListener('click', closeMobileSidebar);
-
   el.chatForm.addEventListener('submit', (e) => {
     e.preventDefault();
     sendMessage();
@@ -637,7 +621,7 @@ function wireEvents() {
     settings.model = el.modelSelect.value;
     saveSettings(settings);
     if (currentConnectionState === ConnectionState.CONNECTED) {
-      setStatusUI(ConnectionState.CONNECTED, `Local AI connected · Model: ${settings.model}`, 'Local AI connected');
+      setStatusUI(ConnectionState.CONNECTED, `Local AI connected · Model: ${settings.model}`);
       el.currentModelBadge.hidden = false;
       el.currentModelBadge.textContent = settings.model;
     }
@@ -659,31 +643,14 @@ function wireEvents() {
     saveSettings(settings);
   });
 
-  el.themeOptions.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      settings.theme = btn.dataset.themeChoice;
-      saveSettings(settings);
-      applyTheme(settings.theme);
-      updateThemeButtons();
-    });
-  });
-
   el.clearCurrentBtn.addEventListener('click', () => {
-    if (!store.getCurrentConversation()) return;
-    if (confirm('Clear all messages in this conversation?')) {
-      store.clearCurrentConversation();
-      renderConversation(store.getCurrentConversation());
-      renderSidebar(el.searchChats.value);
+    if (confirm('Clear this conversation?')) {
+      store.clearConversation();
+      renderConversation(store.getConversation());
     }
   });
 
-  el.clearHistoryBtn.addEventListener('click', () => {
-    if (confirm('Delete all conversation history? This cannot be undone.')) {
-      store.clearAllHistory();
-      renderSidebar();
-      renderConversation(null);
-    }
-  });
+  el.userChip.addEventListener('click', handleLogout);
 }
 
 // ---------------------------------------------------------------------------

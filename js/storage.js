@@ -1,10 +1,11 @@
-// Wraps all localStorage access. No sensitive data (message content is kept
-// local-only by design of this prototype; a real backend should decide what,
-// if anything, is safe to persist client-side).
+// Wraps all localStorage access. Only settings and the single current
+// conversation are persisted (see chat.js) — there is deliberately no saved
+// history of past conversations, to keep the app's local data footprint
+// minimal.
 
 const KEYS = {
   settings: 'aica.settings.v1',
-  conversations: 'aica.conversations.v1',
+  conversation: 'aica.conversation.v1',
 };
 
 export const defaultSettings = {
@@ -12,7 +13,7 @@ export const defaultSettings = {
   model: '', // empty = "not selected yet", populated from getModels()
   temperature: 0.3,
   maxTokens: 1024,
-  theme: 'light', // 'light' | 'dark' | 'system'
+  theme: 'light', // one of the ids in js/themes.js
 };
 
 export function getSettings() {
@@ -33,23 +34,23 @@ export function saveSettings(settings) {
   }
 }
 
-export function getStoredConversations() {
+export function getStoredConversation() {
   try {
-    const raw = localStorage.getItem(KEYS.conversations);
-    return raw ? JSON.parse(raw) : [];
+    const raw = localStorage.getItem(KEYS.conversation);
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return [];
+    return null;
   }
 }
 
-export function saveStoredConversations(conversations) {
+export function saveStoredConversation(conversation) {
   try {
-    localStorage.setItem(KEYS.conversations, JSON.stringify(conversations));
+    localStorage.setItem(KEYS.conversation, JSON.stringify(conversation));
   } catch {
     // Ignore quota/availability errors — chat still works for the session.
   }
 }
 
-export function clearConversationHistory() {
-  localStorage.removeItem(KEYS.conversations);
+export function clearStoredConversation() {
+  localStorage.removeItem(KEYS.conversation);
 }
